@@ -7,7 +7,7 @@ En liten nettside for daglig rettskrivingstrening, først på norsk og senere p�
 1. Logg inn på github.com og lag et nytt repository, for eksempel `skrivetrening`. Det kan være offentlig (gratis Pages) – siden inneholder ingen personlige data.
 2. Last opp alle filene i denne mappen (`index.html`, `style.css`, `app.js`, `ovelser-no.js`, `ovelser-no-2.js`, `ovelser-en.js`, `ovelser-en-2.js`, `README.md`) til roten av repoet. Enklest: «Add file» → «Upload files», dra filene inn, og trykk «Commit changes».
 3. Gå til «Settings» → «Pages». Under «Build and deployment» velger du «Deploy from a branch», branch `main` og mappe `/ (root)`. Trykk «Save».
-4. Etter et minutt eller to dukker adressen opp øverst på samme side, typisk `https://brukernavn.github.io/skrivetrening/`.
+4. Etter et minutt eller to dukker adressen opp øverst på samme side: https://torfinns.github.io/skrivetrening/  
 5. Åpne adressen på sønnens mobil og legg den til på hjemskjermen («Del» → «Legg til på Hjem-skjerm» på iPhone, menyen → «Legg til på startskjermen» på Android). Da oppfører den seg nesten som en app.
 
 ## Hvordan øktene fungerer
