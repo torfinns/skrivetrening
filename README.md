@@ -34,6 +34,10 @@ Den faste oppgavebanken har omtrent 1 000 oppgaver:
 
 Det holder til flere måneder med daglige økter uten at det føles likt. Ordoppgavene kommer igjen etter hvert, og det er meningen – det er slik ordbildet sitter. Skriveoppgavene er det som tar slutt først, og det er der KI-oppgavene (under) gjør størst forskjell.
 
+**Vanskelighetsgrad.** Som standard skal ord skrives, ikke velges fra alternativer (unntatt der valget er selve poenget, som og/å og de/dem). Hintet viser bare første og siste bokstav, ikke hvor mange bokstaver ordet har. «Vis mer hint» eller «Vis alternativene» finnes, men gir halvt poeng. Setningene sier ikke hvor mange feil som er i dem, og omtrent hver femte setning er helt riktig – da skal han la den være. Under «Innstillinger» kan du slå på «Lettere oppgaver» for den gamle varianten med alternativer og utfyllende hint.
+
+**Velg oppgave selv.** På forsiden kan han velge type (ord, setning, vending, skriveoppgave) og nummer, og deretter gå videre til neste nummer etter hvert svar. Inne i en vanlig økt kan han også bytte oppgave eller velge et nummer. Egne øvelser lagres i historikken og i statistikken, men teller ikke mot nivået. En påbegynt dagsøkt venter mens han øver selv.
+
 Engelsk låses opp etter 15 norske økter. Under «Innstillinger» kan du låse det opp med en gang, og du kan også flytte nivået opp eller ned manuelt.
 
 ## Tilbakemelding

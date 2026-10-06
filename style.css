@@ -235,5 +235,11 @@ legend { font-weight: 700; margin-bottom: 6px; }
 .pick { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: var(--bg); border: 1px dashed var(--line); }
 .pick label { display: block; font-size: .9rem; font-weight: 700; margin-bottom: 6px; }
 .pick .row { display: flex; gap: 8px; align-items: center; margin: 0; }
-.pick input { width: 7em; font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--sheet); color: var(--ink); }
+.pick input { width: 5.5em; font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--sheet); color: var(--ink); }
 .warn-text { color: var(--red); margin: 6px 0 0; }
+.pick.free { background: transparent; border: 0; padding: 0; margin: 0; }
+.pick select { width: auto; flex: 0 0 auto; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--sheet); color: var(--ink); }
+.pick .row { flex-wrap: wrap; }
+.free-next { margin-top: 14px; }
+.free-next .next { flex: 1 1 100%; }
+.hint .btn.small-btn { margin-left: 4px; vertical-align: baseline; }

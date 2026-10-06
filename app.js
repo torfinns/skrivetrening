@@ -33,7 +33,7 @@
   const KEY = 'skrivetrening.v1';
   const blank = () => ({
     v: 1,
-    settings: { name: '', length: 'short', enUnlocked: false, apiKey: '', model: 'claude-sonnet-5-5', aiGen: true, lang: 'no', levelOverride: { no: 0, en: 0 } },
+    settings: { name: '', length: 'short', enUnlocked: false, apiKey: '', model: 'claude-sonnet-5-5', aiGen: true, easy: false, lang: 'no', levelOverride: { no: 0, en: 0 } },
     prog: { no: { done: 0, passed: 0, l4: 0 }, en: { done: 0, passed: 0, l4: 0 } },
     stats: { no: {}, en: {} },
     rep: { no: {}, en: {} },
@@ -167,6 +167,11 @@
         chosen.push(w);
       } else chosen.push(...weightedSample(wpool, 1, w => (recent(w.id) ? 0.05 : usedT.has(w.id) ? 0.3 : 1), rng));
     }
+    // Vanlig modus: omtrent hver femte setning er uten feil
+    if (!state.settings.easy) for (let i = 0; i < chosen.length; i++) {
+      const it = chosen[i];
+      if (it.kind === 'fix' && !it.gen && !has(rep, it.id) && rng() < 0.2) chosen[i] = makeClean(it);
+    }
     // Bland ordoppgavene, men behold rekkefølgen ord → setninger → vendinger → skriving
     const order = { word: 0, fix: 1, phrase: 2, write: 3 };
     chosen.sort((a, b) => order[a.kind] - order[b.kind] || (rng() - 0.5));
@@ -179,9 +184,25 @@
   }
   function snapshot(it) {
     const s = { id: it.id, kind: it.kind, c: it.c };
-    for (const k of ['t', 'q', 'o', 'a', 'h', 'e', 'title', 'task', 'skeleton', 'model', 'criteria', 'min', 'max', 'full', 'gen']) if (it[k] !== undefined) s[k] = it[k];
+    for (const k of ['t', 'q', 'o', 'a', 'h', 'e', 'title', 'task', 'skeleton', 'model', 'criteria', 'min', 'max', 'full', 'gen', 'clean']) if (it[k] !== undefined) s[k] = it[k];
     if (it.gen && it.checks) s.checks = it.checks;
+    // Vanlig modus: ord skal skrives, ikke velges – unntatt der valget er selve poenget (og/å, de/dem, their/there …)
+    if (!state.settings.easy && it.kind === 'word' && (it.t === 't' || !CHOICE_CATS.has(it.c))) s.typed = true;
     return s;
+  }
+  const CHOICE_CATS = new Set(['og/å', 'da/når', 'de/dem', 'ligge/legge', "your/you're", 'to/too/two', "their/there/they're", "its/it's", 'then/than', 'confusables', 'norwegianisms', 'grammar']);
+  const FIRST_IS_POINT = new Set(['stum h', 'kj, skj og sj', 'store og små bokstaver', 'capital letters']);
+  const LAST_IS_POINT = new Set(['stum g og d']);
+  // Kort hint som ikke avslører stavingen: første og siste bokstav, uten antall bokstaver
+  function shortHint(it) {
+    const a = String(it.a);
+    if (FIRST_IS_POINT.has(it.c)) return '…' + a.slice(-2);
+    if (LAST_IS_POINT.has(it.c)) return a[0] + '…';
+    return a.length <= 2 ? a[0] + '…' : a[0] + '…' + a.slice(-1);
+  }
+  function makeClean(it) { // setning uten feil – han skal oppdage at den er riktig
+    const a = Array.isArray(it.a) ? it.a[0] : it.a;
+    return { ...it, id: it.id + '~ok', q: a, a, clean: true, e: undefined };
   }
   /* ---------- Bytt oppgave ----------
      Har han hatt oppgaven før, kan han bytte den. Oppgaver han bommet på (og som skal komme tilbake), kan ikke byttes. */
@@ -216,7 +237,7 @@
   // Fast nummer på hver oppgave, så han kan kjenne den igjen – også på en annen enhet.
   function taskNo(lang, it) {
     if (it.gen) return '';
-    const m = /-(w|f|p)(\d+)$/.exec(it.id);
+    const m = /-(w|f|p)(\d+)(~ok)?$/.exec(it.id);
     if (m) return `${{ w: 'Ord', f: 'Setning', p: 'Vending' }[m[1]]} nr. ${+m[2] + 1}`;
     const i = DATA[lang].writing.findIndex(w => w.id === it.id);
     return i >= 0 ? `Skriveoppgave nr. ${i + 1}` : '';
@@ -226,7 +247,8 @@
   function pickTask(val) {
     const S = state.current, it = S.items[S.idx];
     if (it.answer !== undefined) return;
-    const list = kindList(S.lang, it.kind), n = parseInt(val, 10), next = list[n - 1];
+    const kind = S.free && $('#pickkind') ? $('#pickkind').value : it.kind;
+    const list = kindList(S.lang, kind), n = parseInt(val, 10), next = list[n - 1];
     if (!next) { ui.pickMsg = `Skriv et tall fra 1 til ${list.length}.`; render(); return; }
     if (next.id !== it.id && S.items.some(i => i.id === next.id)) { ui.pickMsg = 'Den oppgaven er allerede med i denne økta.'; render(); return; }
     state.seen[next.id] = state.prog[S.lang].done;
@@ -234,6 +256,37 @@
     S.swaps = (S.swaps || 0) + 1;
     ui.pickOpen = false; save(); render();
   }
+
+  /* ---------- Egen øvelse: velg oppgavenummer selv ---------- */
+  function freeStart(kind, val) {
+    const lang = state.settings.lang, list = kindList(lang, kind), n = parseInt(val, 10), it = list[n - 1];
+    if (!it) { ui.freeMsg = `Skriv et tall fra 1 til ${list.length}.`; render(); return; }
+    if (state.current && state.current.free) finishFree(true);
+    if (state.current) { state.stash = state.current; state.current = null; } // dagens økt venter
+    state.seen[it.id] = state.prog[lang].done;
+    state.current = { id: Date.now().toString(36), lang, date: today(), startedAt: new Date().toISOString(), level: levelOf(lang),
+      levelName: 'Egen øvelse', free: true, idx: 0, items: [snapshot(it)] };
+    ui.freeKind = kind; save(); ui.screen = 'run'; render();
+  }
+  function nextNr(lang, it) {
+    const list = kindList(lang, it.kind), i = list.findIndex(x => x.id === it.id.replace('~ok', ''));
+    return i >= 0 && i + 1 < list.length ? list[i + 1] : null;
+  }
+  function freeNext() {
+    const S = state.current, it = S.items[S.idx], next = nextNr(S.lang, it);
+    if (!next) return freeEnd();
+    state.seen[next.id] = state.prog[S.lang].done;
+    S.items.push(snapshot(next)); S.idx++; ui.pickOpen = false; save(); render();
+  }
+  function finishFree(quiet) {
+    const S = state.current;
+    S.items = S.items.filter(i => i.answer !== undefined);
+    if (S.items.length) finishSession(); else state.current = null;
+    if (state.stash) { state.current = state.stash; state.stash = null; }
+    save();
+    if (!quiet) { ui.screen = S.items.length ? 'summary' : 'home'; render(); }
+  }
+  function freeEnd() { finishFree(false); }
 
   function swapCurrent() {
     const S = state.current, it = S.items[S.idx];
@@ -585,14 +638,14 @@ JSON-format:
       return true;
     });
     const lvlBefore = levelOf(lang);
-    P.done++; if (S.passed) P.passed++; if (S.level === 4) P.l4++;
+    if (!S.free) { P.done++; if (S.passed) P.passed++; if (S.level === 4) P.l4++; }
     S.levelUp = levelOf(lang) > lvlBefore;
     delete S.idx;
     state.history.unshift(S);
     state.current = null;
     ui.last = S;
     save();
-    maybeRefill(lang);
+    if (!S.free) maybeRefill(lang);
   }
 
   function streak() {
@@ -631,7 +684,7 @@ JSON-format:
     const lang = state.settings.lang, P = state.prog[lang], L = DATA[lang];
     const name = state.settings.name.trim();
     const cur = state.current && state.current.lang === lang ? state.current : null;
-    const doneToday = state.history.filter(h => h.date === today() && h.lang === lang);
+    const doneToday = state.history.filter(h => h.date === today() && h.lang === lang && !h.free);
     const { lvl, full, comp } = composition(lang);
     const parts = [];
     const nb = { word: ['ordoppgave', 'ordoppgaver'], fix: ['setning å rette', 'setninger å rette'], phrase: ['fast vending', 'faste vendinger'], write: ['skriveoppgave', 'skriveoppgaver'] };
@@ -643,7 +696,9 @@ JSON-format:
     let main;
     if (cur) {
       const left = cur.items.length - cur.idx;
-      main = `<section class="today">
+      main = cur.free ? `<section class="today">
+        <h2>Du er midt i en egen øvelse</h2>
+        <p class="lead">Svarene dine er lagret.</p>` : `<section class="today">
         <h2>Du er midt i en økt</h2>
         <p class="lead">${left} ${left === 1 ? 'oppgave' : 'oppgaver'} igjen. Svarene dine er lagret.</p>
         <button class="btn primary big" data-act="resume">Fortsett økta</button>
@@ -689,9 +744,21 @@ JSON-format:
       .map(([c, s]) => [c, s.right / s.total]).filter(([, a]) => a < 0.85).sort((a, b) => a[1] - b[1]).slice(0, 3);
     const weakHtml = weak.length ? `<section class="block"><h3>Øv mest på</h3><ul class="weak">${weak.map(([c, a]) => `<li><span>${esc(c)}</span><span class="small">${pct(a)} riktig</span></li>`).join('')}</ul><p class="small">Disse dukker oftere opp i øktene dine.</p></section>` : '';
 
+    const fk = ui.freeKind || 'word', flen = kindList(lang, fk).length;
+    const freeHtml = `<section class="block"><h3>Velg oppgave selv</h3>
+      <form class="pick free" data-act="freestart" novalidate>
+        <div class="row"><label class="sr" for="freekind">Type</label>
+        <select id="freekind">${Object.entries(KIND_NR).map(([k, l]) => `<option value="${k}" ${k === fk ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <label class="sr" for="freenr">Nummer</label><input id="freenr" type="number" inputmode="numeric" min="1" max="${flen}" placeholder="1–${flen}" autocomplete="off">
+        <button class="btn primary small-btn">Start</button></div>
+        ${ui.freeMsg ? `<p class="small warn-text" role="status">${esc(ui.freeMsg)}</p>` : ''}
+        <p class="small">Tar du oppgavene i rekkefølge, kan du gå videre til neste nummer etter hvert svar. Egne øvelser lagres i historikken, men teller ikke mot nivået.</p>
+      </form></section>`;
+    ui.freeMsg = '';
     return `<main class="page">
       ${langSwitch(lang, 'lang')}
       ${main}
+      ${freeHtml}
       <section class="block"><h3>Siste sju dager</h3><ol class="week">${week}</ol></section>
       <section class="block"><h3>Nivå</h3><p>${levelTxt}</p>${bar}</section>
       ${weakHtml}
@@ -710,7 +777,17 @@ JSON-format:
     if (it.kind === 'word') {
       const sentence = esc(it.q).replace('___', answered ? `<mark class="gap ${it.score === 1 ? 'right' : 'wrong'}">${esc(it.answer || '…')}</mark>` : '<mark class="gap">&nbsp;</mark>');
       body += `<p class="prompt">${sentence}</p>`;
-      if (it.t === 'c') {
+      if (it.typed) {
+        const more = it.t === 't' ? 'Vis mer hint' : 'Vis alternativene';
+        let hint = `<p class="hint">Skriv ordet. Hint: <strong class="mask">${esc(shortHint(it))}</strong>`;
+        if (!answered && !it.hintUsed) hint += ` <button type="button" class="btn ghost small-btn" data-act="morehint">${more}</button> <span class="small">(gir halvt poeng)</span>`;
+        hint += '</p>';
+        if (it.hintUsed && it.t === 't') hint += `<p class="hint">Mer hint: <strong class="mask">${esc(it.h).replace(/_/g, '<span class="miss">_</span>')}</strong></p>`;
+        if (it.hintUsed && it.t === 'c' && !answered) hint += `<div class="choices">${it.o.map(o => `<button class="choice" data-act="choose" data-val="${esc(o)}">${esc(o)}</button>`).join('')}</div>`;
+        body += hint + `<form data-act="submit" class="answer"><label class="sr" for="ans">Ditt svar</label>
+          <input id="ans" class="line" ${inputAttrs} value="${esc(it.answer ?? '')}" ${answered ? 'readonly' : ''} placeholder="Skriv ordet">
+          ${answered ? '' : '<button class="btn primary">Sjekk</button>'}</form>`;
+      } else if (it.t === 'c') {
         body += `<div class="choices">${it.o.map(o => {
           let cls = '';
           if (answered) cls = o === it.a ? 'right' : (o === it.answer ? 'wrong' : 'dim');
@@ -724,14 +801,20 @@ JSON-format:
       }
     } else if (it.kind === 'fix') {
       const nCh = changeCount(it.q, Array.isArray(it.a) ? it.a[0] : it.a);
-      body += `<p class="instr">Skriv setningen på nytt uten feil. Det er ${nCh} ${nCh === 1 ? 'ting' : 'ting'} å rette.</p>
+      const instr = state.settings.easy && !it.clean
+        ? `Skriv setningen på nytt uten feil. Det er ${nCh} ting å rette.`
+        : 'Skriv setningen på nytt uten feil. Noen setninger er helt riktige – da skriver du den av som den er.';
+      body += `<p class="instr">${instr}</p>
         <p class="prompt wrongtext">${esc(it.q)}</p>
         <form data-act="submit" class="answer"><label class="sr" for="ans">Riktig setning</label>
         <textarea id="ans" class="lined short" rows="2" ${inputAttrs} ${answered ? 'readonly' : ''} placeholder="Skriv riktig setning her">${esc(it.answer ?? '')}</textarea>
         ${answered ? '' : '<div class="row"><button type="button" class="btn ghost" data-act="copyq">Kopier inn setningen</button><button class="btn primary">Sjekk</button></div>'}</form>`;
     } else if (it.kind === 'phrase') {
-      const scaffold = (Array.isArray(it.a) ? it.a[0] : it.a).split(' ').map(w => w[0] + '…').join(' ');
-      body += `<p class="instr">${esc(it.q)}</p><p class="hint">Starten av hvert ord: <strong class="mask">${esc(scaffold)}</strong></p>
+      const a0 = Array.isArray(it.a) ? it.a[0] : it.a;
+      const scaffold = a0.split(' ').map(w => w[0] + '…').join(' ');
+      const showScaffold = state.settings.easy || it.hintUsed;
+      body += `<p class="instr">${esc(it.q)}</p><p class="hint">${showScaffold ? `Starten av hvert ord: <strong class="mask">${esc(scaffold)}</strong>`
+        : `Skriv hele vendingen selv.${answered ? '' : ' <button type="button" class="btn ghost small-btn" data-act="morehint">Vis starten av ordene</button> <span class="small">(gir halvt poeng)</span>'}`}</p>
         <form data-act="submit" class="answer"><label class="sr" for="ans">Vendingen</label>
         <input id="ans" class="line" ${inputAttrs} value="${esc(it.answer ?? '')}" ${answered ? 'readonly' : ''} placeholder="Skriv hele vendingen">
         ${answered ? '' : '<button class="btn primary">Sjekk</button>'}</form>`;
@@ -753,7 +836,8 @@ JSON-format:
           <button class="btn ghost small-btn" data-act="pickopen" aria-expanded="${ui.pickOpen ? 'true' : 'false'}">Velg nr.</button>
           ${swapCandidates(S, it).length ? '<button class="btn ghost small-btn" data-act="swap">Bytt oppgave</button>' : ''}</span></div>`;
       if (ui.pickOpen) note += `<form class="pick" data-act="pick" novalidate>
-          <label for="picknr">${KIND_NR[it.kind]} nr. (1–${list.length})</label>
+          ${S.free ? `<label class="sr" for="pickkind">Type</label><select id="pickkind">${Object.entries(KIND_NR).map(([k, l]) => `<option value="${k}" ${k === it.kind ? 'selected' : ''}>${l}</option>`).join('')}</select>` : ''}
+          <label for="picknr">${S.free ? 'Nummer' : KIND_NR[it.kind] + ' nr.'} (1–${list.length})</label>
           <div class="row"><input id="picknr" type="number" inputmode="numeric" min="1" max="${list.length}" autocomplete="off" required>
           <button class="btn primary small-btn">Gå til</button></div>
           ${ui.pickMsg ? `<p class="small warn-text" role="status">${esc(ui.pickMsg)}</p>` : ''}</form>`;
@@ -767,10 +851,11 @@ JSON-format:
     const last = S.idx === n - 1;
     return `<main class="page run">
       <div class="runbar"><button class="btn ghost small-btn" data-act="pause">Pause</button>
-        <p class="count">${kindLabel}, oppgave ${S.idx + 1} av ${n}</p></div>
-      <div class="meter thin"><span style="width:${Math.round((S.idx + (answered ? 1 : 0)) / n * 100)}%"></span></div>
+        <p class="count">${S.free ? `Egen øvelse, oppgave ${S.idx + 1}` : `${kindLabel}, oppgave ${S.idx + 1} av ${n}`}</p></div>
+      ${S.free ? '' : `<div class="meter thin"><span style="width:${Math.round((S.idx + (answered ? 1 : 0)) / n * 100)}%"></span></div>`}
       <article class="task">${body}</article>
-      ${answered ? `<button class="btn primary big next" data-act="next">${last ? 'Se resultatet' : 'Neste oppgave'}</button>` : ''}
+      ${S.free ? (answered ? `<div class="row free-next">${nextNr(S.lang, it) ? `<button class="btn primary big next" data-act="freenext">Neste: ${esc(taskNo(S.lang, nextNr(S.lang, it)))}</button>` : ''}<button class="btn ghost" data-act="freeend">Avslutt øvelsen</button></div>` : '')
+        : answered ? `<button class="btn primary big next" data-act="next">${last ? 'Se resultatet' : 'Neste oppgave'}</button>` : ''}
     </main>`;
   }
   const countWords = t => (String(t || '').match(/[\p{L}\p{N}]+/gu) || []).length;
@@ -840,11 +925,12 @@ JSON-format:
     const right = S.items.filter(i => i.score === 1).length;
     const P = state.prog[S.lang], lvl = levelOf(S.lang), nextAt = LEVEL_AT[lvl + 1];
     let progress = '';
-    if (S.levelUp) progress = `<p class="levelup">Nytt nivå: ${LEVELS[lvl].name}. Oppgavene blir litt mer krevende fra neste økt.</p>`;
+    if (S.free) progress = '<p>Egen øvelse – teller ikke mot nivået, men feilene kommer tilbake i vanlige økter.</p>';
+    else if (S.levelUp) progress = `<p class="levelup">Nytt nivå: ${LEVELS[lvl].name}. Oppgavene blir litt mer krevende fra neste økt.</p>`;
     else if (!S.passed && S.graded) progress = `<p>Økta telte ikke mot neste nivå denne gangen (under ${pct(PASS)}). Oppgavene du bommet på, kommer tilbake.</p>`;
     else if (nextAt !== undefined && !state.settings.levelOverride[S.lang]) progress = `<p>${nextAt - P.passed} ${nextAt - P.passed === 1 ? 'bestått økt' : 'beståtte økter'} til neste nivå.</p>`;
     return `<main class="page">
-      <section class="today done"><h2>Økta er ferdig</h2>
+      <section class="today done"><h2>${S.free ? 'Øvelsen er ferdig' : 'Økta er ferdig'}</h2>
         ${S.graded ? `<p class="score">${pct(S.score)}</p><p class="lead">${right} av ${S.graded} helt riktig.</p>` : '<p class="lead">Skriveoppgaven er levert.</p>'}
         ${progress}
       </section>
@@ -902,6 +988,8 @@ JSON-format:
       </section>
       <section class="block form"><h3>For foreldre</h3>
         <label class="radio"><input type="checkbox" data-set="enUnlocked" ${s.enUnlocked ? 'checked' : ''}> Lås opp engelsk nå</label>
+        <label class="radio"><input type="checkbox" data-set="easy" ${s.easy ? 'checked' : ''}> Lettere oppgaver</label>
+        <p class="small">Lettere oppgaver viser alternativer å velge mellom, mer utfyllende hint og hvor mange feil som er i hver setning. Gjelder fra neste oppgave.</p>
         <label>Nivå på norsk ${lvlSel('no')}</label>
         <label>Nivå på engelsk ${lvlSel('en')}</label>
         <p class="small">Automatisk nivå øker når økter bestås med minst ${pct(PASS)} riktig: nivå 2 etter ${LEVEL_AT[2]}, nivå 3 etter ${LEVEL_AT[3]} og nivå 4 etter ${LEVEL_AT[4]} beståtte økter.</p>
@@ -952,7 +1040,8 @@ JSON-format:
   function answerCurrent(val) {
     const S = state.current, it = S.items[S.idx];
     if (it.answer !== undefined) return;
-    if (it.kind === 'word' && it.t === 'c') { it.answer = val; it.score = val === it.a ? 1 : 0; }
+    if (it.kind === 'word' && it.t === 'c' && !it.typed) { it.answer = val; it.score = val === it.a ? 1 : 0; }
+    else if (it.kind === 'word' && it.typed && it.t === 'c' && it.o.includes(val) && it.hintUsed) { it.answer = val; it.score = val === it.a ? 1 : 0; }
     else if (it.kind === 'write') {
       if (!norm(val)) return;
       clearTimeout(draftTimer);
@@ -965,6 +1054,9 @@ JSON-format:
       it.score = r.score; if (r.note) it.note = r.note;
       if (Array.isArray(it.a)) it.matched = r.ans;
     }
+    if (it.hintUsed && it.score === 1) { it.score = 0.5; it.note = 'Riktig, men du brukte ekstra hint – derfor halvt poeng.'; }
+    if (it.clean && it.score === 1) it.note = 'Det var ingen feil i denne setningen – og du lot den være.';
+    if (it.clean && it.score < 1) it.note = 'Denne setningen hadde ingen feil. Du endret noe som var riktig.';
     save(); render();
   }
 
@@ -975,6 +1067,7 @@ JSON-format:
     else if (act === 'lang') { state.settings.lang = el.dataset.lang; save(); render(); }
     else if (act === 'hlang') { ui.histLang = el.dataset.lang; render(); }
     else if (act === 'start') {
+      if (state.current && state.current.free) finishFree(true);
       if (state.current && state.current.lang !== state.settings.lang && !confirm('Du har en uferdig økt på det andre språket. Vil du forkaste den?')) return;
       state.current = buildSession(state.settings.lang, el.dataset.extra === '1'); save(); ui.screen = 'run'; render();
     }
@@ -998,6 +1091,9 @@ JSON-format:
     else if (act === 'share') shareSession(el.dataset.id);
     else if (act === 'gen') { maybeRefill(state.settings.lang, true); render(); }
     else if (act === 'swap') swapCurrent();
+    else if (act === 'morehint') { const it = state.current.items[state.current.idx]; if (it.answer === undefined) { it.hintUsed = true; save(); render(); } }
+    else if (act === 'freenext') freeNext();
+    else if (act === 'freeend') freeEnd();
     else if (act === 'pickopen') { ui.pickOpen = !ui.pickOpen; render(); }
     else if (act === 'export') {
       const blob = new Blob([JSON.stringify({ ...state, settings: { ...state.settings, apiKey: '' } }, null, 1)], { type: 'application/json' });
@@ -1012,6 +1108,8 @@ JSON-format:
     }
   });
   document.addEventListener('submit', e => {
+    const ff = e.target.closest('[data-act="freestart"]');
+    if (ff) { e.preventDefault(); freeStart($('#freekind').value, $('#freenr').value); return; }
     const pf = e.target.closest('[data-act="pick"]');
     if (pf) { e.preventDefault(); pickTask($('#picknr').value); return; }
     const f = e.target.closest('[data-act="submit"]'); if (!f) return;
@@ -1042,11 +1140,14 @@ JSON-format:
     const t = e.target;
     if (t.dataset.act === 'crit') { const it = state.current.items[state.current.idx]; it.self = it.self || []; it.self[+t.dataset.i] = t.checked; save(); return; }
     if (t.dataset.act === 'import') { importFile(t.files[0]); return; }
+    if (t.id === 'freekind') { ui.freeKind = t.value; render(); requestAnimationFrame(() => { const n = $('#freenr'); if (n) n.focus(); }); return; }
+    if (t.id === 'pickkind') { const n = $('#picknr'), len = kindList(state.current.lang, t.value).length; n.max = len; $('label[for="picknr"]').textContent = `Nummer (1–${len})`; return; }
     const key = t.dataset.set; if (!key) return;
     const s = state.settings;
     if (key === 'length') s.length = t.value;
     else if (key === 'enUnlocked') s.enUnlocked = t.checked;
     else if (key === 'aiGen') s.aiGen = t.checked;
+    else if (key === 'easy') s.easy = t.checked;
     else if (key === 'apiKey' || key === 'model') { /* lagres ved input; tegner siden på nytt så KI-valgene vises */ }
     else if (key.startsWith('lvl-')) s.levelOverride[key.slice(4)] = +t.value;
     else return;
